@@ -1,0 +1,241 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+import pyautogui
+import time
+import threading
+import tkinter as tk
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from openpyxl import load_workbook
+
+# Set up WebDriver
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_experimental_option("detach", True)  # Keeps browser open
+driver = webdriver.Chrome(options=chrome_options)
+
+# Open GST Login Page
+driver.get("https://services.gst.gov.in/services/login")
+time.sleep(2)  # Allow page to load
+
+# Ensure correct browser window remains active
+driver.switch_to.window(driver.current_window_handle)
+
+
+# Enter Username & Password
+username = "Banashankari95"
+password = "Shankari04*"
+
+
+driver.find_element(By.ID, "username").send_keys(username)
+driver.find_element(By.ID, "user_pass").send_keys(password)
+
+# Display Captcha Image and Prompt for Manual Input
+captcha_box = driver.find_element(By.ID, "captcha")
+captcha_box.screenshot("captcha.png")  # Screenshot captcha image
+
+pyautogui.alert("Check the browser for captcha and enter it manually in the next prompt.", "GST Login")
+captcha_input = pyautogui.prompt("Enter the Captcha as seen on the GST website:", "Captcha Input")
+if captcha_input is None or captcha_input.strip() == "":
+    pyautogui.alert("Login aborted!", "GST Login")
+    driver.quit()
+    exit()
+
+# Enter Captcha and Submit
+captcha_box.send_keys(captcha_input)
+captcha_box.send_keys(Keys.RETURN)  # Press Enter
+
+# Wait until login is processed
+wait = WebDriverWait(driver, 10)
+wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+# Handle "Remind Me Later" Popup
+try:
+    remind_me_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Remind me later')]")))
+    remind_me_button.click()
+except TimeoutException:
+    pass  # No popup found, continue
+
+# Ensure we are on the correct page before proceeding
+driver.switch_to.window(driver.current_window_handle)
+time.sleep(3)  # Allow UI updates
+
+# Navigate to "Search by GSTIN/UIN" via Dropdown
+try:
+    search_dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@class='dropdown-toggle' and contains(text(), 'Search Taxpayer')]")))
+    search_dropdown.click()
+    search_by_gstin = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Search by GSTIN/UIN')]")))
+    search_by_gstin.click()
+    time.sleep(3)  # Wait for the search page to load
+except Exception as e:
+    print("[ERROR] Could not navigate to 'Search by GSTIN/UIN'. Exiting.")
+    driver.quit()
+    exit()
+
+# Wait for the GST input field
+try:
+    gst_input = wait.until(EC.presence_of_element_located((By.ID, "for_gstin")))
+except TimeoutException:
+    print("[ERROR] GST Search Page did not load properly. Exiting.")
+    driver.quit()
+    exit()
+
+
+
+from tkinter import Tk, filedialog
+from openpyxl import load_workbook
+
+# Hide the root Tkinter window
+Tk().withdraw()
+
+# Show file selection dialog
+file_path = filedialog.askopenfilename(
+    title="Select the GST Validator Excel File",
+    filetypes=[("Excel Files", "*.xlsx;*.xlsm")]  # Only show Excel files
+)
+
+if not file_path:  # If no file is selected, exit the program
+    print("No file selected. Exiting...")
+    exit()
+
+print(f"Selected file: {file_path}")
+
+# Load Excel File
+wb = load_workbook(file_path)
+ws = wb.active  # Assumes first sheet has GST numbers
+
+
+
+
+# Load Excel File
+wb = load_workbook(file_path)
+ws = wb.active  # Assumes first sheet has GST numbers
+
+# Read State Codes and Names from Columns N & M
+state_mapping = {}
+for row in range(2, ws.max_row + 0):
+    state_code = ws[f"N{row}"].value
+    state_name = ws[f"M{row}"].value
+    if state_code and state_name:
+        state_code = str(state_code).zfill(2)  # Ensure 1 → "01", 9 → "09"
+        state_mapping[state_code] = state_name
+
+# Get GST Numbers from Column A
+gst_numbers = [cell.value for cell in ws["A"] if cell.value]
+
+# Start Processing GST Numbers
+for row, gst_number in enumerate(gst_numbers, start=1):
+    if not gst_number:  # Stop if a blank cell is found
+        break
+
+    gst_number = str(gst_number).strip()  # Remove extra spaces
+
+    if len(gst_number) != 15:
+        print(f"Skipping invalid GST number: {gst_number}")
+        continue
+
+    print(f"Processing GST Number: {gst_number}")
+
+    try:
+        driver.switch_to.window(driver.current_window_handle)
+
+        # Ensure the search input is still available
+        gst_input = wait.until(EC.presence_of_element_located((By.ID, "for_gstin")))
+        gst_input.clear()
+
+        # 🔹 **Add extra wait only for the first GST number**
+        if row == 2:
+            print("Waiting longer for the first GST search...")
+            time.sleep(3)  # **Extra wait for the first GST number**
+        else:
+            time.sleep(0.1)  # **Shorter wait for subsequent GST numbers**
+
+        gst_input.send_keys(gst_number)
+
+        # Click Search button (ensure it's fully ready)
+        search_button = wait.until(EC.element_to_be_clickable((By.ID, "lotsearch")))
+        search_button.click()
+
+        # Extract Trade Name
+        try:
+            trade_name_element = wait.until(EC.visibility_of_element_located((By.XPATH, "//p[.='Trade Name']/following-sibling::p/strong")))
+            trade_name = trade_name_element.text.strip()
+        except TimeoutException:
+            trade_name = "Not Found"
+
+        # Extract Status
+        try:
+            status_element = wait.until(EC.visibility_of_element_located((By.XPATH, "//p[.='GSTIN / UIN  Status']/following-sibling::p/strong")))
+            status = status_element.text.strip()
+        except TimeoutException:
+            status = "Not Found"
+
+        # Click "Place of Business" to reveal address details
+        try:
+            place_of_business_link = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Place of Business')]")))
+            place_of_business_link.click()
+        except TimeoutException:
+            print("Could not find 'Place of Business' link.")
+            continue
+
+        # Extract Principal Place of Business Address
+        try:
+            address_element = wait.until(EC.visibility_of_element_located((By.XPATH, "//td[@data-title=\"'Address'\"]")))
+            address = address_element.text.strip()
+        except TimeoutException:
+            address = "Not Found"
+
+        print(f"Trade Name: {trade_name}, Status: {status}, Address: {address}")
+
+        # Extract first two digits from GST number for state lookup
+        state_code = gst_number[:2]
+        state_name = state_mapping.get(state_code, "Not Found")
+
+        # Save Data in Excel
+        ws[f"B{row}"] = trade_name
+        ws[f"C{row}"] = status
+        ws[f"D{row}"] = address
+        ws[f"E{row}"] = state_name  # Store State Name
+
+        # Save the updated Excel file
+        saved = False
+        while not saved:
+            try:
+                wb.save(file_path)
+                saved = True
+            except PermissionError:
+                print("Excel file is open! Close it and press Enter to continue...")
+                input()
+
+    except Exception as e:
+        print(f"Error processing GST number {gst_number}: {str(e)}")
+        continue
+
+print("\n[INFO] GST Data Extraction Completed!")
+
+
+import time
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
+
+# Wait for 2 seconds before logging out
+time.sleep(2)
+
+try:
+    # Locate and click the user profile dropdown to open the menu
+    profile_dropdown = driver.find_element(By.CSS_SELECTOR, "a.dropdown-toggle.lang-dpwn")
+    profile_dropdown.click()
+    time.sleep(1)  # Small delay to allow menu to open
+
+    # Locate and click the "Logout" button
+    logout_button = driver.find_element(By.XPATH, "//a[contains(@href, 'services/logout')]")
+    logout_button.click()
+
+    print("[INFO] Successfully logged out of GST portal.")
+except Exception as e:
+    print(f"[WARNING] Could not log out: {str(e)}")
+
+# Close the browser
+driver.quit()
+print("[INFO] Browser closed. Task completed.")

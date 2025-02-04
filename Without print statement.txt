@@ -1,0 +1,161 @@
+import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+import pyautogui
+import threading
+import tkinter as tk
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from openpyxl import load_workbook
+from tkinter import Tk, filedialog
+
+# Set up WebDriver
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_experimental_option("detach", True)
+driver = webdriver.Chrome(options=chrome_options)
+
+driver.get("https://services.gst.gov.in/services/login")
+time.sleep(2)
+driver.switch_to.window(driver.current_window_handle)
+
+import pyautogui
+
+# Ask for Username & Password
+username = pyautogui.prompt("Enter your GST Portal Username:", "GST Login")
+if not username:
+    pyautogui.alert("Username cannot be empty! Exiting...", "GST Login")
+    exit()
+
+password = pyautogui.password("Enter your GST Portal Password:", "GST Login", mask="*")
+if not password:
+    pyautogui.alert("Password cannot be empty! Exiting...", "GST Login")
+    exit()
+
+print(f"Using Username: {username}")  # Just for confirmation (not showing password)
+
+
+driver.find_element(By.ID, "username").send_keys(username)
+driver.find_element(By.ID, "user_pass").send_keys(password)
+
+# Handle Captcha
+captcha_box = driver.find_element(By.ID, "captcha")
+captcha_box.screenshot("captcha.png")
+pyautogui.alert("Check the browser for captcha and enter it manually in the next prompt.", "GST Login")
+captcha_input = pyautogui.prompt("Enter the Captcha as seen on the GST website:", "Captcha Input")
+if captcha_input is None or captcha_input.strip() == "":
+    driver.quit()
+    exit()
+captcha_box.send_keys(captcha_input)
+captcha_box.send_keys(Keys.RETURN)
+
+wait = WebDriverWait(driver, 10)
+wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+# Handle "Remind Me Later" Popup
+try:
+    remind_me_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Remind me later')]")))
+    remind_me_button.click()
+except TimeoutException:
+    pass
+
+driver.switch_to.window(driver.current_window_handle)
+time.sleep(3)
+
+# Navigate to "Search by GSTIN/UIN"
+try:
+    search_dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@class='dropdown-toggle' and contains(text(), 'Search Taxpayer')]")))
+    search_dropdown.click()
+    search_by_gstin = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Search by GSTIN/UIN')]")))
+    search_by_gstin.click()
+    time.sleep(3)
+except:
+    driver.quit()
+    exit()
+
+# File Selection
+Tk().withdraw()
+file_path = filedialog.askopenfilename(title="Select the GST Validator Excel File", filetypes=[("Excel Files", "*.xlsx;*.xlsm")])
+if not file_path:
+    exit()
+
+wb = load_workbook(file_path)
+ws = wb.active
+
+# Read State Codes and Names
+state_mapping = {}
+for row in range(2, ws.max_row + 0):
+    state_code = ws[f"N{row}"].value
+    state_name = ws[f"M{row}"].value
+    if state_code and state_name:
+        state_code = str(state_code).zfill(2)
+        state_mapping[state_code] = state_name
+
+# Get GST Numbers
+gst_numbers = [cell.value for cell in ws["A"] if cell.value]
+
+for row, gst_number in enumerate(gst_numbers, start=1):
+    if not gst_number:
+        break
+    gst_number = str(gst_number).strip()
+    if len(gst_number) != 15:
+        continue
+    try:
+        driver.switch_to.window(driver.current_window_handle)
+        gst_input = wait.until(EC.presence_of_element_located((By.ID, "for_gstin")))
+        gst_input.clear()
+        if row == 2:
+            time.sleep(3)
+        else:
+            time.sleep(0.1)
+        gst_input.send_keys(gst_number)
+        search_button = wait.until(EC.element_to_be_clickable((By.ID, "lotsearch")))
+        search_button.click()
+        try:
+            trade_name_element = wait.until(EC.visibility_of_element_located((By.XPATH, "//p[.='Trade Name']/following-sibling::p/strong")))
+            trade_name = trade_name_element.text.strip()
+        except TimeoutException:
+            trade_name = "Not Found"
+        try:
+            status_element = wait.until(EC.visibility_of_element_located((By.XPATH, "//p[.='GSTIN / UIN  Status']/following-sibling::p/strong")))
+            status = status_element.text.strip()
+        except TimeoutException:
+            status = "Not Found"
+        try:
+            place_of_business_link = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Place of Business')]")))
+            place_of_business_link.click()
+        except TimeoutException:
+            continue
+        try:
+            address_element = wait.until(EC.visibility_of_element_located((By.XPATH, "//td[@data-title=\"'Address'\"]")))
+            address = address_element.text.strip()
+        except TimeoutException:
+            address = "Not Found"
+        state_code = gst_number[:2]
+        state_name = state_mapping.get(state_code, "Not Found")
+        ws[f"B{row}"] = trade_name
+        ws[f"C{row}"] = status
+        ws[f"D{row}"] = address
+        ws[f"E{row}"] = state_name
+        saved = False
+        while not saved:
+            try:
+                wb.save(file_path)
+                saved = True
+            except PermissionError:
+                input()
+    except:
+        continue
+
+# Logout and Close Browser
+time.sleep(2)
+try:
+    profile_dropdown = driver.find_element(By.CSS_SELECTOR, "a.dropdown-toggle.lang-dpwn")
+    profile_dropdown.click()
+    time.sleep(1)
+    logout_button = driver.find_element(By.XPATH, "//a[contains(@href, 'services/logout')]")
+    logout_button.click()
+except:
+    pass
+driver.quit()
