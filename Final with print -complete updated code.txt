@@ -24,8 +24,8 @@ driver.switch_to.window(driver.current_window_handle)
 
 
 # Enter Username & Password
-username = "Banashankari95"
-password = "Shankari04*"
+username = ""
+password = "*"
 
 
 driver.find_element(By.ID, "username").send_keys(username)
